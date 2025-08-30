@@ -13,7 +13,7 @@ This custom node set provides a modular, VRAM-efficient, and offline-capable wor
 -   **High-Fidelity Audio:** Generates 48kHz stereo audio using the advanced DAC VAE.
 -   **Video-to-Audio Synchronization:** Leverages the Synchformer model to ensure audio events are perfectly timed with visual actions.
 -   **Text-Guided Control:** Use text prompts, powered by the CLAP model, to creatively direct the type of sound you want to generate.
--   **Modular & Comfy-Native:** The workflow is broken into logical `Loader`, `Sampler`, and `VAE Decode` nodes, mirroring the standard Stable Diffusion workflow.
+-   **Modular:** The workflow is broken into logical `Loader`, `Sampler`, and `VAE Decode` nodes, mirroring the standard Stable Diffusion workflow.
 -   **VRAM Management:** Caches models in VRAM for fast, repeated generations. Includes an optional "Low VRAM" mode to unload models after use, ideal for memory-constrained systems.
 -   **Offline Capable:** No automatic model downloads. Once you've downloaded the models, the node works entirely offline.
 
@@ -23,7 +23,7 @@ This custom node set provides a modular, VRAM-efficient, and offline-capable wor
 
 1.  Open ComfyUI Manager.
 2.  Click on `Install Custom Nodes`.
-3.  Search for `HunyuanVideo_Foley` and click `Install`.
+3.  Search for `ComfyUI-HunyuanVideo_Foley` and click `Install`.
 4.  Restart ComfyUI.
 5.  Follow the **Download Models** instructions below.
 
@@ -131,7 +131,7 @@ This node takes the latent tensor from the sampler and converts it into a final 
 
 ### Performance & Workflow Tips
 -   **VRAM Requirement:** For the best performance (keeping models cached), a GPU with approximately **10-12GB of VRAM** is recommended.
--   **Initial Load:** The first time you run a workflow, the `Hunyuan-Foley model loader` will take a moment to load all models from disk into VRAM. Subsequent runs in the same session will be nearly instantaneous as long as models are not unloaded.
+-   **Initial Load:** The first time you run a workflow, the `Hunyuan-Foley model loader` will take a moment to load all models from disk into VRAM. Subsequent runs in the same session will be faster as long as models are not unloaded.
 -   **Low VRAM Mode:** If you are running low on VRAM or only need to generate a single audio track, set the `unload_models_after_use` toggle on the `Hunyuan-Foley VAE Decode` node to `True`. This will significantly reduce the idle VRAM footprint after the workflow completes.
 
 ## 🙏 Acknowledgements
@@ -140,4 +140,5 @@ This node takes the latent tensor from the sampler and converts it into a final 
 -   **Google Research:** For the SigLIP model.
 -   **LAION:** For the CLAP model.
 -   **Descript:** For the [descript-audio-codec](https://github.com/descriptinc/descript-audio-codec) (DAC VAE).
+
 -   **v-iashin:** For the [Synchformer](https://github.com/v-iashin/Synchformer) model.
