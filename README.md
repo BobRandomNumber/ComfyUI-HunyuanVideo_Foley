@@ -2,7 +2,7 @@
 
 Generate high-fidelity, synchronized foley audio for any video directly within ComfyUI, powered by Tencent's HunyuanVideo-Foley model.
 
-This custom node set provides a modular, VRAM-efficient, and offline-capable workflow for professional-grade AI sound effect generation.
+This custom node set provides a modular and offline-capable workflow for AI sound effect generation.
 
 ![image](https://github.com/BobRandomNumber/ComfyUI-HunyuanVideo_Foley/blob/main/example_workflows/Hunyuan-Foley.png)
 
@@ -11,7 +11,7 @@ This custom node set provides a modular, VRAM-efficient, and offline-capable wor
 ## ✨ Features
 
 -   **High-Fidelity Audio:** Generates 48kHz stereo audio using the advanced DAC VAE.
--   **Video-to-Audio Synchronization:** Leverages the Synchformer model to ensure audio events are perfectly timed with visual actions.
+-   **Video-to-Audio Synchronization:** Leverages the Synchformer model to ensure audio events are timed with visual actions.
 -   **Text-Guided Control:** Use text prompts, powered by the CLAP model, to creatively direct the type of sound you want to generate.
 -   **Modular:** The workflow is broken into logical `Loader`, `Sampler`, and `VAE Decode` nodes, mirroring the standard Stable Diffusion workflow.
 -   **VRAM Management:** Caches models in VRAM for fast, repeated generations. Includes an optional "Low VRAM" mode to unload models after use, ideal for memory-constrained systems.
@@ -142,4 +142,5 @@ This node takes the latent tensor from the sampler and converts it into a final 
 -   **Descript:** For the [descript-audio-codec](https://github.com/descriptinc/descript-audio-codec) (DAC VAE).
 
 -   **v-iashin:** For the [Synchformer](https://github.com/v-iashin/Synchformer) model.
+
 
