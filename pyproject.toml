@@ -4,9 +4,7 @@ description = "Generate high-fidelity, synchronized foley audio for any video di
 version = "0.1.0"
 license = {file = "LICENSE"}
 
-classifiers = [
-     "Environment :: GPU :: NVIDIA CUDA",
-]
+classifiers = ["Environment :: GPU :: NVIDIA CUDA"]
 
 dependencies = ["diffusers", "timm", "transformers>=4.49.0", "descript-audiotools", "omegaconf"]
 
@@ -15,5 +13,5 @@ Repository = "https://github.com/BobRandomNumber/ComfyUI-HunyuanVideo_Foley"
 "Bug Tracker" = "https://github.com/BobRandomNumber/ComfyUI-HunyuanVideo_Foley/issues"
 
 [tool.comfy]
-PublisherId = "BobRandomNumber"
+PublisherId = "bobrandomnumber"
 DisplayName = "HunyuanVideo_Foley"
