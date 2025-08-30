@@ -4,7 +4,7 @@ Generate high-fidelity, synchronized foley audio for any video directly within C
 
 This custom node set provides a modular, VRAM-efficient, and offline-capable workflow for professional-grade AI sound effect generation.
 
-![image](https://github.com/user-attachments/assets/18357597-9e4a-4467-ab1e-1510e11883ea)
+![image](https://github.com/BobRandomNumber/ComfyUI-HunyuanVideo_Foley/blob/main/example_workflows/Hunyuan-Foley.png)
 
 ---
 
@@ -142,3 +142,4 @@ This node takes the latent tensor from the sampler and converts it into a final 
 -   **Descript:** For the [descript-audio-codec](https://github.com/descriptinc/descript-audio-codec) (DAC VAE).
 
 -   **v-iashin:** For the [Synchformer](https://github.com/v-iashin/Synchformer) model.
+
