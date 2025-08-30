@@ -66,7 +66,7 @@ This node requires you to download the model files manually and organize them in
 
     *   **CLAP Text Model** from [laion/larger_clap_general on Hugging Face](https://huggingface.co/laion/larger_clap_general/tree/refs%2Fpr%2F2):
         *   Create a new folder named `clap`.
-        *   Download `pytorch_model.safetensors`, `config.json`, `merges.txt` and `vocab.json` and place them inside the `clap` folder.
+        *   Download `model.safetensors`, `config.json`, `merges.txt` and `vocab.json` and place them inside the `clap` folder.
 
 **Your final folder structure should look exactly like this:**
 
@@ -84,7 +84,7 @@ ComfyUI/
         │   └── preprocessor_config.json
         │
         └── clap/             <-- Subfolder for CLAP
-            ├── pytorch_model.safetensors
+            ├── model.safetensors
             ├── config.json
             ├── merges.txt
             └── vocab.json
@@ -142,6 +142,7 @@ This node takes the latent tensor from the sampler and converts it into a final 
 -   **Descript:** For the [descript-audio-codec](https://github.com/descriptinc/descript-audio-codec) (DAC VAE).
 
 -   **v-iashin:** For the [Synchformer](https://github.com/v-iashin/Synchformer) model.
+
 
 
 
