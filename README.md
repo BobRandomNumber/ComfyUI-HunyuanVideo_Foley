@@ -64,7 +64,7 @@ This node requires you to download the model files manually and organize them in
         *   Create a new folder named `siglip2`.
         *   Download `model.safetensors`, `config.json` and `preprocessor_config.json` place them inside the `siglip2` folder.
 
-    *   **CLAP Text Model** from [laion/larger_clap_general on Hugging Face](https://huggingface.co/laion/larger_clap_general/tree/main):
+    *   **CLAP Text Model** from [laion/larger_clap_general on Hugging Face](https://huggingface.co/laion/larger_clap_general/tree/refs%2Fpr%2F2):
         *   Create a new folder named `clap`.
         *   Download `pytorch_model.safetensors`, `config.json`, `merges.txt` and `vocab.json` and place them inside the `clap` folder.
 
@@ -142,5 +142,6 @@ This node takes the latent tensor from the sampler and converts it into a final 
 -   **Descript:** For the [descript-audio-codec](https://github.com/descriptinc/descript-audio-codec) (DAC VAE).
 
 -   **v-iashin:** For the [Synchformer](https://github.com/v-iashin/Synchformer) model.
+
 
 
