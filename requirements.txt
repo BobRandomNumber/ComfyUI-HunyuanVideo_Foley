@@ -1,0 +1,7 @@
+diffusers
+timm
+transformers>=4.49.0
+descript-audiotools
+omegaconf
+
+  
