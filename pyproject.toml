@@ -1,7 +1,7 @@
 [project]
 name = "HunyuanVideo_Foley"
 description = "Generate high-fidelity, synchronized foley audio for any video directly within ComfyUI, powered by Tencent's HunyuanVideo-Foley model."
-version = "0.1.0"
+version = "0.1.1"
 license = {file = "LICENSE"}
 
 classifiers = ["Environment :: GPU :: NVIDIA CUDA"]
@@ -14,4 +14,5 @@ Repository = "https://github.com/BobRandomNumber/ComfyUI-HunyuanVideo_Foley"
 
 [tool.comfy]
 PublisherId = "bobrandomnumber"
-DisplayName = "HunyuanVideo_Foley"
+
+DisplayName = "ComfyUI-HunyuanVideo_Foley"
