@@ -11,7 +11,7 @@ from PIL import Image
 # Use relative imports for our vendored code
 from .src.hunyuanvideo_foley.utils.model_utils import denoise_process
 from .src.hunyuanvideo_foley.utils.config_utils import load_yaml, AttributeDict
-from .src.hunyuanvideo_foley.utils.feature_utils import get_frames_av, encode_video_with_sync, encode_text_feat
+from .src.hunyuanvideo_foley.utils.feature_utils import encode_video_with_sync, encode_text_feat
 from .src.hunyuanvideo_foley.constants import FPS_VISUAL
 from .src.hunyuanvideo_foley.models.dac_vae.model.dac import DAC
 
@@ -43,27 +43,23 @@ def load_state_dict(model, model_path):
 loaded_models_cache = {}
 loaded_vaes_cpu = {}
 
-# --- NEW: Helper function to unload models from VRAM ---
 def unload_foley_models():
     global loaded_models_cache
     if not loaded_models_cache:
         logging.info("No Hunyuan-Foley models to unload.")
         return
 
-    logging.info("Unloading Hunyuan-Foley models from VRAM as requested.")
+    logging.info("Unloading Hunyuan-Foley models from VRAM to CPU as requested.")
     try:
-        for key in list(loaded_models_cache.keys()):
-            model_tuple = loaded_models_cache.pop(key)
+        for key in loaded_models_cache:
+            model_tuple = loaded_models_cache[key]
             model_dict = model_tuple[0]
             for model_name, model in model_dict.items():
                 if hasattr(model, 'to'):
-                    model.to("cpu")
-        
-        # Explicitly clear the dictionary
-        loaded_models_cache.clear()
+                    model_dict[model_name] = model.to("cpu")
         
         empty_cuda_cache()
-        logging.info("Hunyuan-Foley models successfully unloaded and VRAM cleared.")
+        logging.info("Hunyuan-Foley models successfully moved to CPU and VRAM cleared.")
     except Exception as e:
         logging.error(f"An error occurred while unloading models: {e}")
 
@@ -114,14 +110,15 @@ class HunyuanFoleyModelLoader:
         base_dir = os.path.dirname(__file__)
         config_path = os.path.join(base_dir, "src/hunyuanvideo_foley/configs", config_name)
         
-        precision = "bfloat16" # Hardcoded for performance
+        precision = "bfloat16"
         cache_key = (os.path.normpath(model_path), precision)
+        
         if cache_key in loaded_models_cache:
-            logging.info(f"Loading cached VRAM models from {model_path_name}")
+            logging.info(f"Loading cached models from {model_path_name}")
             return (loaded_models_cache[cache_key],)
 
         target_device = "cuda" if torch.cuda.is_available() else "cpu"
-        logging.info(f"One-Time Load: Loading all models to {target_device}. This may take a moment...")
+        logging.info(f"Loading all models to {target_device} for the first time. This may take a moment...")
         model_dict, cfg = self.load_all_models_to_vram(model_path, config_path, precision, target_device)
         
         foley_model_tuple = (model_dict, cfg, precision)
@@ -164,6 +161,7 @@ class HunyuanFoleyModelLoader:
         }
         return model_dict, cfg
 
+
 class LoadDACHunyuanVAE:
     @classmethod
     def INPUT_TYPES(s):
@@ -190,13 +188,17 @@ class LoadDACHunyuanVAE:
         loaded_vaes_cpu[vae_path] = vae
         return (vae,)
 
+
 class HunyuanFoleySampler:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
             "foley_model": ("FOLEY_MODEL",),
-            "video_path": ("STRING", {"default": "X://path/to/your/video.mp4", "video_upload": True}),
+            "video_frames": ("IMAGE",),
+            "fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 240.0, "step": 1.0}),
             "prompt": ("STRING", {"multiline": True, "default": "A person walks on frozen ice"}),
+            # --- NEW ---: Added negative_prompt input
+            "negative_prompt": ("STRING", {"multiline": True, "default": "noisy, harsh"}),
             "guidance_scale": ("FLOAT", {"default": 4.5, "min": 1.0, "max": 10.0, "step": 0.1}),
             "steps": ("INT", {"default": 50, "min": 10, "max": 100, "step": 1}),
             "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
@@ -206,27 +208,54 @@ class HunyuanFoleySampler:
     FUNCTION = "sample"
     CATEGORY = "HunyuanVideo-Foley"
 
-    def sample(self, foley_model, video_path, prompt, guidance_scale, steps, seed):
-        if not os.path.exists(video_path): raise FileNotFoundError(f"Video file not found: {video_path}")
+    # --- MODIFIED ---: Added negative_prompt to the function signature
+    def sample(self, foley_model, video_frames, fps, prompt, negative_prompt, guidance_scale, steps, seed):
         model_dict, cfg, precision = foley_model
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[precision]
+        
+        current_device_type = next(model_dict['foley_model'].parameters()).device.type
+        if current_device_type != device:
+            logging.info(f"Models are on '{current_device_type}', moving to '{device}' for sampling...")
+            dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[precision]
+            for model_name, model in model_dict.items():
+                if hasattr(model, 'to'):
+                    if model_name == 'foley_model':
+                        model_dict[model_name] = model.to(device, dtype=dtype)
+                    else:
+                        model_dict[model_name] = model.to(device)
+            empty_cuda_cache()
+            logging.info("Models successfully moved for sampling.")
+        
         set_manual_seed(seed)
         
-        frames_siglip, _ = get_frames_av(video_path, FPS_VISUAL["siglip2"])
+        frames_np = (video_frames.cpu().numpy() * 255).astype(np.uint8)
+        all_frames = [frame for frame in frames_np]
+        num_frames = len(all_frames)
+        
+        audio_len_in_s = num_frames / fps
+        logging.info(f"Received {num_frames} frames at {fps} FPS, for a total duration of {audio_len_in_s:.2f}s.")
+
+        siglip_fps = FPS_VISUAL["siglip2"]
+        siglip_indices = np.linspace(0, num_frames - 1, int(audio_len_in_s * siglip_fps)).astype(int)
+        frames_siglip = [all_frames[i] for i in siglip_indices]
+
         images_siglip = model_dict['siglip2_preprocess'](images=[Image.fromarray(f).convert('RGB') for f in frames_siglip], return_tensors="pt").to(device)
         with torch.no_grad():
             siglip_output = model_dict['siglip2_model'](**images_siglip)
         siglip_feat = siglip_output.pooler_output.unsqueeze(0)
 
-        frames_sync, audio_len_in_s = get_frames_av(video_path, FPS_VISUAL["synchformer"])
-        images_sync = torch.from_numpy(frames_sync).permute(0, 3, 1, 2)
+        sync_fps = FPS_VISUAL["synchformer"]
+        sync_indices = np.linspace(0, num_frames - 1, int(audio_len_in_s * sync_fps)).astype(int)
+        frames_sync_np = np.array([all_frames[i] for i in sync_indices])
+        
+        images_sync = torch.from_numpy(frames_sync_np).permute(0, 3, 1, 2)
         sync_frames = model_dict['syncformer_preprocess'](images_sync).unsqueeze(0)
         
         model_dict_with_device = {**model_dict, 'device': device}
         sync_feat = encode_video_with_sync(sync_frames, AttributeDict(model_dict_with_device))
 
-        prompts = ["noisy, harsh", prompt]
+        # --- MODIFIED ---: Replaced the hardcoded string with the new input variable
+        prompts = [negative_prompt, prompt]
         text_feat_res, _ = encode_text_feat(prompts, AttributeDict(model_dict_with_device))
         text_feat, uncond_text_feat = text_feat_res[1:], text_feat_res[:1]
         if cfg.model_config.model_kwargs.text_length < text_feat.shape[1]:
@@ -244,6 +273,7 @@ class HunyuanFoleySampler:
         
         return ({"samples": latents.cpu(), "audio_len_in_s": audio_len_in_s},)
 
+
 class DACHunyuanVAEDecode:
     @classmethod
     def INPUT_TYPES(s):
@@ -252,7 +282,6 @@ class DACHunyuanVAEDecode:
                 "samples": ("LATENT",), 
                 "vae": ("VAE",) 
             },
-            # Add an optional input for the toggle
             "optional": {
                 "unload_models_after_use": ("BOOLEAN", {"default": False})
             }
@@ -276,12 +305,10 @@ class DACHunyuanVAEDecode:
             audio_tensor = audio_tensor[:, :int(audio_len_in_s * sample_rate)]
             audio_out = {"waveform": audio_tensor, "sample_rate": sample_rate}
         finally:
-            # This block always runs, ensuring VAE is moved to CPU
             vae_on_device.to("cpu")
             empty_cuda_cache()
             logging.info("VAE decoding complete and moved to CPU.")
 
-            # NEW: Check the toggle and unload models if requested
             if unload_models_after_use:
                 unload_foley_models()
 
