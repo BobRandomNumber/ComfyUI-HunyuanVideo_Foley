@@ -4,7 +4,7 @@ Generate high-fidelity, synchronized foley audio for any video directly within C
 
 This custom node set provides a modular and offline-capable workflow for AI sound effect generation.
 
-> **Note:** The sampler node has been updated! It now accepts `IMAGE` frames and `fps` directly from video loader nodes for a more integrated and efficient workflow.
+> **Note:** The sampler node has been updated! It now accepts `IMAGE` frames and `fps` directly from video loader nodes for a more integrated and efficient workflow. Also exposed Negative Prompt.
 
 ![image](https://github.com/BobRandomNumber/ComfyUI-HunyuanVideo_Foley/blob/main/example_workflows/Hunyuan-Foley.png)
 
@@ -153,4 +153,5 @@ This node takes the latent tensor from the sampler and converts it into a final 
 -   **Google Research:** For the SigLIP model.
 -   **LAION:** For the CLAP model.
 -   **Descript:** For the [descript-audio-codec](https://github.com/descriptinc/descript-audio-codec) (DAC VAE).
+
 -   **v-iashin:** For the [Synchformer](https://github.com/v-iashin/Synchformer) model.
