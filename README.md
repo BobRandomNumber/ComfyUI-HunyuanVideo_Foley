@@ -15,6 +15,7 @@ This custom node set provides a modular and offline-capable workflow for AI soun
 -   **High-Fidelity Audio:** Generates 48kHz stereo audio using the advanced DAC VAE.
 -   **Video-to-Audio Synchronization:** Leverages the Synchformer model to ensure audio events are timed with visual actions.
 -   **Text-Guided Control:** Use positive and negative text prompts, powered by the CLAP model, to creatively direct the type of sound you want to generate.
+-   **Flexible Model Choice:** Includes support for the original high-quality model and a smaller, faster XL variant.
 -   **Modular:** The workflow is broken into logical `Loader`, `Sampler`, and `VAE Decode` nodes, mirroring the standard Stable Diffusion workflow.
 -   **Integrated:** Accepts video frames directly from popular loader nodes like `VHS_LoadVideoPath`, avoiding redundant file operations.
 -   **VRAM Management:** Caches models in VRAM for fast, repeated generations. Includes an optional "Low VRAM" mode to unload models after use, ideal for memory-constrained systems.
@@ -60,6 +61,7 @@ This node requires you to download the model files manually and organize them in
 
     *   **Hunyuan-Foley Base Models** from [Tencent/HunyuanVideo-Foley on Hugging Face](https://huggingface.co/tencent/HunyuanVideo-Foley/tree/main):
         *   `hunyuanvideo_foley.pth`
+        *   `hunyuanvideo_foley_xl.pth` (Optional: A smaller, faster alternative model)
         *   `synchformer_state_dict.pth`
         *   `vae_128d_48k.pth`
 
@@ -78,6 +80,7 @@ ComfyUI/
 └── models/
     └── hunyuan_foley/        <-- You will see this folder selected in the Loader node 
         ├── hunyuanvideo_foley.pth
+        ├── hunyuanvideo_foley_xl.pth
         ├── synchformer_state_dict.pth
         ├── vae_128d_48k.pth
         │
@@ -101,6 +104,7 @@ The workflow is designed to be modular and familiar to ComfyUI users.
 This node loads the main diffusion model and all necessary conditioning models (SigLIP2, CLAP, Synchformer) into VRAM. These models are cached for fast subsequent generations.
 -   **Inputs:**
     -   `model_path_name`: The model folder you created.
+    -   `foley_checkpoint_name`: A dropdown to select which main model checkpoint to use (`.pth` file). Allows switching between the base and XL models.
 -   **Outputs:**
     -   `FOLEY_MODEL`: The loaded models, ready to be passed to the sampler.
 
@@ -137,6 +141,7 @@ This node takes the latent tensor from the sampler and converts it into a final 
 ### 💡 Example Workflow & Tips
 -   **VRAM Requirement:** For the best performance (keeping models cached), a GPU with approximately **10-12GB of VRAM** is recommended.
 -   **Initial Load:** The first time you run a workflow, the `Hunyuan-Foley model loader` will take a moment to load all models from disk into VRAM. Subsequent runs in the same session will be faster as long as models are not unloaded.
+-   **XL Model Advantage:** The `hunyuanvideo_foley_xl.pth` model is smaller than the original. It may offer quicker loading and inference, making it a great choice for users prioritizing speed or working with more limited VRAM.
 
 -   **Connecting The Sampler (Recommended Workflow):**
     1.  Use a `VHS_LoadVideoPath` node to load your video. This will output the frames (`IMAGE`) and video information (`VHS_VIDEOINFO`).
@@ -153,5 +158,4 @@ This node takes the latent tensor from the sampler and converts it into a final 
 -   **Google Research:** For the SigLIP model.
 -   **LAION:** For the CLAP model.
 -   **Descript:** For the [descript-audio-codec](https://github.com/descriptinc/descript-audio-codec) (DAC VAE).
-
 -   **v-iashin:** For the [Synchformer](https://github.com/v-iashin/Synchformer) model.
