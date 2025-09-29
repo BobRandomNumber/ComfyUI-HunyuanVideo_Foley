@@ -87,13 +87,17 @@ class HunyuanFoleyModelLoader:
         if not model_paths:
             return {"required": {"error": ("STRING", {"default": "No models found. See console for instructions on folder structure.", "multiline": True})}}
             
-        return {"required": {"model_path_name": (model_paths,)}}
+        return {"required": {
+            "model_path_name": (model_paths,),
+            "foley_checkpoint_name": (["hunyuanvideo_foley.pth", "hunyuanvideo_foley_xl.pth"],)
+            }
+        }
 
     RETURN_TYPES = ("FOLEY_MODEL",)
     FUNCTION = "load_foley_model"
     CATEGORY = "HunyuanVideo-Foley"
 
-    def load_foley_model(self, model_path_name, error=None):
+    def load_foley_model(self, model_path_name, foley_checkpoint_name, error=None):
         if error:
             logging.error("No model folders found in ComfyUI/models/hunyuan_foley/.")
             raise ValueError(error)
@@ -106,26 +110,46 @@ class HunyuanFoleyModelLoader:
         else:
             model_path = os.path.join(self.model_dir, model_path_name)
 
-        config_name = "hunyuanvideo-foley-xxl.yaml"
+        precision = "bfloat16"
+        cache_key = (os.path.normpath(model_path), precision, foley_checkpoint_name)
+
+        models_to_unload = []
+        for key, (model_dict, _, _) in loaded_models_cache.items():
+            if key != cache_key:
+                main_model = model_dict.get('foley_model')
+                if main_model is not None and main_model.device.type == 'cuda':
+                    models_to_unload.append(key)
+        
+        if models_to_unload:
+            logging.info(f"Switching models. Unloading {len(models_to_unload)} model(s) from VRAM to CPU...")
+            for key in models_to_unload:
+                model_dict, _, _ = loaded_models_cache[key]
+                for model in model_dict.values():
+                    if hasattr(model, 'to'):
+                        model.to('cpu')
+            empty_cuda_cache()
+
+        if foley_checkpoint_name == "hunyuanvideo_foley_xl.pth":
+            config_name = "hunyuanvideo-foley-xl.yaml"
+        else:
+            config_name = "hunyuanvideo-foley-xxl.yaml"
+        
         base_dir = os.path.dirname(__file__)
         config_path = os.path.join(base_dir, "src/hunyuanvideo_foley/configs", config_name)
         
-        precision = "bfloat16"
-        cache_key = (os.path.normpath(model_path), precision)
-        
         if cache_key in loaded_models_cache:
-            logging.info(f"Loading cached models from {model_path_name}")
+            logging.info(f"Loading cached models for {foley_checkpoint_name}")
             return (loaded_models_cache[cache_key],)
 
         target_device = "cuda" if torch.cuda.is_available() else "cpu"
-        logging.info(f"Loading all models to {target_device} for the first time. This may take a moment...")
-        model_dict, cfg = self.load_all_models_to_vram(model_path, config_path, precision, target_device)
+        logging.info(f"Loading {foley_checkpoint_name} to {target_device}. This may take a moment...")
+        model_dict, cfg = self.load_all_models_to_vram(model_path, config_path, precision, target_device, foley_checkpoint_name)
         
         foley_model_tuple = (model_dict, cfg, precision)
         loaded_models_cache[cache_key] = foley_model_tuple
         return (foley_model_tuple,)
 
-    def load_all_models_to_vram(self, model_path, config_path, precision, target_device):
+    def load_all_models_to_vram(self, model_path, config_path, precision, target_device, foley_checkpoint_name):
         from .src.hunyuanvideo_foley.models.hifi_foley import HunyuanVideoFoley
         from .src.hunyuanvideo_foley.models.synchformer import Synchformer
         from transformers import AutoTokenizer, ClapTextModelWithProjection, SiglipImageProcessor, SiglipVisionModel
@@ -140,7 +164,7 @@ class HunyuanFoleyModelLoader:
         if not os.path.isdir(clap_path): raise FileNotFoundError(f"CLAP folder not found at {clap_path}")
 
         foley_model = HunyuanVideoFoley(cfg, dtype=dtype).eval()
-        load_state_dict(foley_model, os.path.join(model_path, "hunyuanvideo_foley.pth"))
+        load_state_dict(foley_model, os.path.join(model_path, foley_checkpoint_name))
         
         siglip2_model = SiglipVisionModel.from_pretrained(siglip_path, local_files_only=True, low_cpu_mem_usage=True).eval()
         siglip2_preprocess = SiglipImageProcessor.from_pretrained(siglip_path, local_files_only=True)
