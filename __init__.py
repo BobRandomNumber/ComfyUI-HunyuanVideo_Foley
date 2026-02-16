@@ -1,3 +1,14 @@
-from .hunyuan_foley import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+from comfy_api.latest import ComfyExtension, io
+from .hunyuan_foley import HunyuanFoleyModelLoader, LoadDACHunyuanVAE, HunyuanFoleySampler, DACHunyuanVAEDecode
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+class HunyuanFoleyExtension(ComfyExtension):
+    async def get_node_list(self) -> list[type[io.ComfyNode]]:
+        return [
+            HunyuanFoleyModelLoader,
+            LoadDACHunyuanVAE,
+            HunyuanFoleySampler,
+            DACHunyuanVAEDecode,
+        ]
+
+async def comfy_entrypoint() -> HunyuanFoleyExtension:
+    return HunyuanFoleyExtension()

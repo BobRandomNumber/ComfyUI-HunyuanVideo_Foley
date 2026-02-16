@@ -6,7 +6,63 @@ import folder_paths
 import torchaudio
 import gc
 import logging
+import sys
+import contextlib
+import warnings
 from PIL import Image
+
+# --- Suppress noisy logs and warnings ---
+warnings.filterwarnings("ignore")
+
+# Force diffusers and transformers to be quiet as early as possible
+try:
+    import transformers
+    transformers.utils.logging.set_verbosity_error()
+except ImportError:
+    pass
+
+try:
+    import diffusers.utils.logging
+    diffusers.utils.logging.set_verbosity_error()
+except ImportError:
+    pass
+
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("diffusers").setLevel(logging.ERROR)
+logging.getLogger("torch").setLevel(logging.ERROR)
+
+class DummyFile:
+    def write(self, x): pass
+    def flush(self): pass
+    def isatty(self): return False
+
+@contextlib.contextmanager
+def suppress_output():
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = DummyFile()
+    sys.stderr = DummyFile()
+    try:
+        yield
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
+# --- Workaround for diffusers bug ---
+# Fix for: NameError: name 'logger' is not defined in diffusers.quantizers.torchao.torchao_quantizer
+# We do this WITHOUT suppression first to avoid capturing a closed file in the logger
+try:
+    import diffusers.utils.logging
+    import builtins
+    if not hasattr(builtins, 'logger'):
+        # Inject a logger that is already set to ERROR
+        l = diffusers.utils.logging.get_logger("diffusers.quantizers.torchao.torchao_quantizer")
+        l.setLevel(logging.ERROR)
+        builtins.logger = l
+except Exception:
+    pass
+
+from comfy_api.latest import ComfyExtension, io, ui
 
 # Use relative imports for our vendored code
 from .src.hunyuanvideo_foley.utils.model_utils import denoise_process
@@ -34,9 +90,7 @@ def empty_cuda_cache():
 
 def load_state_dict(model, model_path):
     state_dict = torch.load(model_path, map_location="cpu", weights_only=False)
-    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-    if missing_keys: logging.warning(f"Missing keys: {missing_keys}")
-    if unexpected_keys: logging.warning(f"Unexpected keys: {unexpected_keys}")
+    model.load_state_dict(state_dict, strict=False)
     return model
 
 # --- Model Cache ---
@@ -46,10 +100,9 @@ loaded_vaes_cpu = {}
 def unload_foley_models():
     global loaded_models_cache
     if not loaded_models_cache:
-        logging.info("No Hunyuan-Foley models to unload.")
         return
 
-    logging.info("Unloading Hunyuan-Foley models from VRAM to CPU as requested.")
+    logging.info("Unloading Hunyuan-Foley models from VRAM to CPU...")
     try:
         for key in loaded_models_cache:
             model_tuple = loaded_models_cache[key]
@@ -59,56 +112,68 @@ def unload_foley_models():
                     model_dict[model_name] = model.to("cpu")
         
         empty_cuda_cache()
-        logging.info("Hunyuan-Foley models successfully moved to CPU and VRAM cleared.")
     except Exception as e:
         logging.error(f"An error occurred while unloading models: {e}")
 
 
-class HunyuanFoleyModelLoader:
+class HunyuanFoleyModelLoader(io.ComfyNode):
     def __init__(self):
         self.model_dir = os.path.join(folder_paths.models_dir, "hunyuan_foley")
 
     @classmethod
-    def INPUT_TYPES(s):
-        instance = s()
-        if not os.path.exists(instance.model_dir): os.makedirs(instance.model_dir)
+    def define_schema(cls) -> io.Schema:
+        model_dir = os.path.join(folder_paths.models_dir, "hunyuan_foley")
+        if not os.path.exists(model_dir): os.makedirs(model_dir)
         
         model_paths = []
-        root_folder_name = os.path.basename(instance.model_dir)
+        root_folder_name = os.path.basename(model_dir)
 
-        if os.path.isfile(os.path.join(instance.model_dir, "hunyuanvideo_foley.pth")):
+        if os.path.isfile(os.path.join(model_dir, "hunyuanvideo_foley.pth")):
             model_paths.append(root_folder_name)
         
-        for f in os.listdir(instance.model_dir):
-            sub_path = os.path.join(instance.model_dir, f)
+        for f in os.listdir(model_dir):
+            sub_path = os.path.join(model_dir, f)
             if os.path.isdir(sub_path) and os.path.isfile(os.path.join(sub_path, "hunyuanvideo_foley.pth")):
                 model_paths.append(f)
         
         if not model_paths:
-            return {"required": {"error": ("STRING", {"default": "No models found. See console for instructions on folder structure.", "multiline": True})}}
+            return io.Schema(
+                node_id="HunyuanFoleyModelLoader",
+                display_name="Hunyuan-Foley model loader",
+                category="HunyuanVideo-Foley",
+                inputs=[
+                    io.String.Input("error", default="No models found. See console for instructions on folder structure.", multiline=True)
+                ],
+                outputs=[]
+            )
             
-        return {"required": {
-            "model_path_name": (model_paths,),
-            "foley_checkpoint_name": (["hunyuanvideo_foley.pth", "hunyuanvideo_foley_xl.pth"],)
-            }
-        }
+        return io.Schema(
+            node_id="HunyuanFoleyModelLoader",
+            display_name="Hunyuan-Foley model loader",
+            category="HunyuanVideo-Foley",
+            inputs=[
+                io.Combo.Input("model_path_name", options=model_paths),
+                io.Combo.Input("foley_checkpoint_name", options=["hunyuanvideo_foley.pth", "hunyuanvideo_foley_xl.pth"])
+            ],
+            outputs=[
+                io.Custom("FOLEY_MODEL").Output()
+            ]
+        )
 
-    RETURN_TYPES = ("FOLEY_MODEL",)
-    FUNCTION = "load_foley_model"
-    CATEGORY = "HunyuanVideo-Foley"
-
-    def load_foley_model(self, model_path_name, foley_checkpoint_name, error=None):
+    @classmethod
+    def execute(cls, model_path_name, foley_checkpoint_name, error=None) -> io.NodeOutput:
         if error:
             logging.error("No model folders found in ComfyUI/models/hunyuan_foley/.")
             raise ValueError(error)
 
         global loaded_models_cache
         
-        root_folder_name = os.path.basename(self.model_dir)
+        model_dir = os.path.join(folder_paths.models_dir, "hunyuan_foley")
+        root_folder_name = os.path.basename(model_dir)
         if model_path_name == root_folder_name:
-            model_path = self.model_dir
+            model_path = model_dir
         else:
-            model_path = os.path.join(self.model_dir, model_path_name)
+            model_path = os.path.join(model_dir, model_path_name)
 
         precision = "bfloat16"
         cache_key = (os.path.normpath(model_path), precision, foley_checkpoint_name)
@@ -138,18 +203,18 @@ class HunyuanFoleyModelLoader:
         config_path = os.path.join(base_dir, "src/hunyuanvideo_foley/configs", config_name)
         
         if cache_key in loaded_models_cache:
-            logging.info(f"Loading cached models for {foley_checkpoint_name}")
-            return (loaded_models_cache[cache_key],)
+            return io.NodeOutput(loaded_models_cache[cache_key])
 
         target_device = "cuda" if torch.cuda.is_available() else "cpu"
-        logging.info(f"Loading {foley_checkpoint_name} to {target_device}. This may take a moment...")
-        model_dict, cfg = self.load_all_models_to_vram(model_path, config_path, precision, target_device, foley_checkpoint_name)
+        logging.info(f"Loading {foley_checkpoint_name}...")
+        model_dict, cfg = cls.load_all_models_to_vram(model_path, config_path, precision, target_device, foley_checkpoint_name)
         
         foley_model_tuple = (model_dict, cfg, precision)
         loaded_models_cache[cache_key] = foley_model_tuple
-        return (foley_model_tuple,)
+        return io.NodeOutput(foley_model_tuple)
 
-    def load_all_models_to_vram(self, model_path, config_path, precision, target_device, foley_checkpoint_name):
+    @classmethod
+    def load_all_models_to_vram(cls, model_path, config_path, precision, target_device, foley_checkpoint_name):
         from .src.hunyuanvideo_foley.models.hifi_foley import HunyuanVideoFoley
         from .src.hunyuanvideo_foley.models.synchformer import Synchformer
         from transformers import AutoTokenizer, ClapTextModelWithProjection, SiglipImageProcessor, SiglipVisionModel
@@ -164,31 +229,52 @@ class HunyuanFoleyModelLoader:
         if not os.path.isdir(clap_path): raise FileNotFoundError(f"CLAP folder not found at {clap_path}")
 
         foley_model = HunyuanVideoFoley(cfg, dtype=dtype).eval()
-        load_state_dict(foley_model, os.path.join(model_path, foley_checkpoint_name))
+        with suppress_output():
+            load_state_dict(foley_model, os.path.join(model_path, foley_checkpoint_name))
         
-        siglip2_model = SiglipVisionModel.from_pretrained(siglip_path, local_files_only=True, low_cpu_mem_usage=True).eval()
-        siglip2_preprocess = SiglipImageProcessor.from_pretrained(siglip_path, local_files_only=True)
+        with suppress_output():
+            siglip2_model = SiglipVisionModel.from_pretrained(siglip_path, local_files_only=True, low_cpu_mem_usage=True).eval()
+            siglip2_preprocess = SiglipImageProcessor.from_pretrained(siglip_path, local_files_only=True)
 
-        clap_tokenizer = AutoTokenizer.from_pretrained(clap_path, local_files_only=True)
-        clap_model = ClapTextModelWithProjection.from_pretrained(clap_path, local_files_only=True, low_cpu_mem_usage=True).eval()
+            clap_tokenizer = AutoTokenizer.from_pretrained(clap_path, local_files_only=True)
+            clap_model = ClapTextModelWithProjection.from_pretrained(clap_path, local_files_only=True, low_cpu_mem_usage=True).eval()
         
         from torchvision.transforms import v2
-        syncformer_preprocess = v2.Compose([v2.Resize(224, interpolation=v2.InterpolationMode.BICUBIC), v2.CenterCrop(224), v2.ToImage(), v2.ToDtype(torch.float32, scale=True), v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])])
+        
+        # Preprocessor for PIL/Numpy inputs (legacy/backup)
+        syncformer_preprocess = v2.Compose([
+            v2.Resize(224, interpolation=v2.InterpolationMode.BICUBIC), 
+            v2.CenterCrop(224), 
+            v2.ToImage(), 
+            v2.ToDtype(torch.float32, scale=True), 
+            v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        ])
+        
+        # Preprocessor for Tensor inputs (B, C, H, W) in [0, 1]
+        syncformer_preprocess_tensor = v2.Compose([
+            v2.Resize(224, interpolation=v2.InterpolationMode.BICUBIC),
+            v2.CenterCrop(224),
+            v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        ])
+        
         syncformer_model = Synchformer().eval()
-        syncformer_model.load_state_dict(torch.load(os.path.join(model_path, "synchformer_state_dict.pth"), map_location="cpu"))
+        with suppress_output():
+            syncformer_model.load_state_dict(torch.load(os.path.join(model_path, "synchformer_state_dict.pth"), map_location="cpu"))
         
         model_dict = { 
             'foley_model': foley_model.to(target_device, dtype=dtype), 
             'siglip2_preprocess': siglip2_preprocess, 'siglip2_model': siglip2_model.to(target_device), 
             'clap_tokenizer': clap_tokenizer, 'clap_model': clap_model.to(target_device), 
-            'syncformer_preprocess': syncformer_preprocess, 'syncformer_model': syncformer_model.to(target_device)
+            'syncformer_preprocess': syncformer_preprocess,
+            'syncformer_preprocess_tensor': syncformer_preprocess_tensor,
+            'syncformer_model': syncformer_model.to(target_device)
         }
         return model_dict, cfg
 
 
-class LoadDACHunyuanVAE:
+class LoadDACHunyuanVAE(io.ComfyNode):
     @classmethod
-    def INPUT_TYPES(s):
+    def define_schema(cls) -> io.Schema:
         vae_files = [f for f in folder_paths.get_filename_list("vae") if "dac" in f.lower() or "vae_128d_48k" in f.lower()]
         model_dir = os.path.join(folder_paths.models_dir, "hunyuan_foley")
         if os.path.exists(model_dir):
@@ -197,49 +283,60 @@ class LoadDACHunyuanVAE:
                     if file == "vae_128d_48k.pth":
                         rel_path = os.path.relpath(os.path.join(root, file), folder_paths.models_dir)
                         if rel_path not in vae_files: vae_files.append(rel_path)
-        return {"required": {"vae_name": (vae_files,)}}
+        return io.Schema(
+            node_id="LoadDACHunyuanVAE",
+            display_name="Hunyuan-Foley VAE loader",
+            category="HunyuanVideo-Foley",
+            inputs=[
+                io.Combo.Input("vae_name", options=vae_files)
+            ],
+            outputs=[
+                io.Vae.Output()
+            ]
+        )
 
-    RETURN_TYPES = ("VAE",)
-    FUNCTION = "load_vae"
-    CATEGORY = "HunyuanVideo-Foley"
-
-    def load_vae(self, vae_name):
+    @classmethod
+    def execute(cls, vae_name) -> io.NodeOutput:
         global loaded_vaes_cpu
         vae_path = folder_paths.get_full_path("vae", vae_name)
         if not vae_path: vae_path = os.path.join(folder_paths.models_dir, vae_name)
-        if vae_path in loaded_vaes_cpu: return (loaded_vaes_cpu[vae_path],)
-        vae = DAC.load(vae_path).eval()
+        if vae_path in loaded_vaes_cpu: return io.NodeOutput(loaded_vaes_cpu[vae_path])
+        with suppress_output():
+            vae = DAC.load(vae_path).eval()
         loaded_vaes_cpu[vae_path] = vae
-        return (vae,)
+        return io.NodeOutput(vae)
 
 
-class HunyuanFoleySampler:
+class HunyuanFoleySampler(io.ComfyNode):
     @classmethod
-    def INPUT_TYPES(s):
-        return {"required": {
-            "foley_model": ("FOLEY_MODEL",),
-            "video_frames": ("IMAGE",),
-            "fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 240.0, "step": 1.0}),
-            "prompt": ("STRING", {"multiline": True, "default": "A person walks on frozen ice"}),
-            # --- NEW ---: Added negative_prompt input
-            "negative_prompt": ("STRING", {"multiline": True, "default": "noisy, harsh"}),
-            "guidance_scale": ("FLOAT", {"default": 4.5, "min": 1.0, "max": 10.0, "step": 0.1}),
-            "steps": ("INT", {"default": 50, "min": 10, "max": 100, "step": 1}),
-            "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
-        }}
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="HunyuanFoleySampler",
+            display_name="Hunyuan-Foley Sampler",
+            category="HunyuanVideo-Foley",
+            inputs=[
+                io.Custom("FOLEY_MODEL").Input("foley_model"),
+                io.Image.Input("video_frames"),
+                io.Float.Input("fps", default=24.0, min=1.0, max=240.0, step=1.0),
+                io.String.Input("prompt", default="A person walks on frozen ice", multiline=True),
+                io.String.Input("negative_prompt", default="noisy, harsh", multiline=True),
+                io.Float.Input("guidance_scale", default=4.5, min=1.0, max=10.0, step=0.1),
+                io.Int.Input("steps", default=50, min=10, max=100, step=1),
+                io.Int.Input("seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF)
+            ],
+            outputs=[
+                io.Latent.Output()
+            ]
+        )
 
-    RETURN_TYPES = ("LATENT",)
-    FUNCTION = "sample"
-    CATEGORY = "HunyuanVideo-Foley"
-
-    # --- MODIFIED ---: Added negative_prompt to the function signature
-    def sample(self, foley_model, video_frames, fps, prompt, negative_prompt, guidance_scale, steps, seed):
+    @classmethod
+    def execute(cls, foley_model, video_frames, fps, prompt, negative_prompt, guidance_scale, steps, seed) -> io.NodeOutput:
         model_dict, cfg, precision = foley_model
         device = "cuda" if torch.cuda.is_available() else "cpu"
         
         current_device_type = next(model_dict['foley_model'].parameters()).device.type
         if current_device_type != device:
-            logging.info(f"Models are on '{current_device_type}', moving to '{device}' for sampling...")
+            logging.info(f"Moving models to '{device}'...")
             dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[precision]
             for model_name, model in model_dict.items():
                 if hasattr(model, 'to'):
@@ -248,44 +345,48 @@ class HunyuanFoleySampler:
                     else:
                         model_dict[model_name] = model.to(device)
             empty_cuda_cache()
-            logging.info("Models successfully moved for sampling.")
         
         set_manual_seed(seed)
         
-        frames_np = (video_frames.cpu().numpy() * 255).astype(np.uint8)
-        all_frames = [frame for frame in frames_np]
-        num_frames = len(all_frames)
-        
+        num_frames = video_frames.shape[0]
         audio_len_in_s = num_frames / fps
-        logging.info(f"Received {num_frames} frames at {fps} FPS, for a total duration of {audio_len_in_s:.2f}s.")
-
+        
+        # SigLIP Processing
         siglip_fps = FPS_VISUAL["siglip2"]
         siglip_indices = np.linspace(0, num_frames - 1, int(audio_len_in_s * siglip_fps)).astype(int)
-        frames_siglip = [all_frames[i] for i in siglip_indices]
+        
+        # Convert selected frames to PIL for SigLIP (safest for HF processor)
+        # Slicing tensor first avoids converting all frames
+        frames_siglip_tensor = video_frames[siglip_indices] # (B_sub, H, W, C)
+        frames_siglip_np = (frames_siglip_tensor.cpu().numpy() * 255).astype(np.uint8)
+        images_siglip_pil = [Image.fromarray(f).convert('RGB') for f in frames_siglip_np]
 
-        images_siglip = model_dict['siglip2_preprocess'](images=[Image.fromarray(f).convert('RGB') for f in frames_siglip], return_tensors="pt").to(device)
+        images_siglip = model_dict['siglip2_preprocess'](images=images_siglip_pil, return_tensors="pt").to(device)
         with torch.no_grad():
             siglip_output = model_dict['siglip2_model'](**images_siglip)
         siglip_feat = siglip_output.pooler_output.unsqueeze(0)
 
+        # Synchformer Processing
         sync_fps = FPS_VISUAL["synchformer"]
         sync_indices = np.linspace(0, num_frames - 1, int(audio_len_in_s * sync_fps)).astype(int)
-        frames_sync_np = np.array([all_frames[i] for i in sync_indices])
         
-        images_sync = torch.from_numpy(frames_sync_np).permute(0, 3, 1, 2)
-        sync_frames = model_dict['syncformer_preprocess'](images_sync).unsqueeze(0)
+        # Direct Tensor Processing for Synchformer
+        # Input: (B, H, W, C) -> Subselect -> Permute (B_sub, C, H, W)
+        frames_sync_tensor = video_frames[sync_indices].permute(0, 3, 1, 2)
+        
+        # Use optimized tensor preprocessor
+        sync_frames = model_dict['syncformer_preprocess_tensor'](frames_sync_tensor).unsqueeze(0).to(device)
         
         model_dict_with_device = {**model_dict, 'device': device}
         sync_feat = encode_video_with_sync(sync_frames, AttributeDict(model_dict_with_device))
 
-        # --- MODIFIED ---: Replaced the hardcoded string with the new input variable
         prompts = [negative_prompt, prompt]
         text_feat_res, _ = encode_text_feat(prompts, AttributeDict(model_dict_with_device))
         text_feat, uncond_text_feat = text_feat_res[1:], text_feat_res[:1]
         if cfg.model_config.model_kwargs.text_length < text_feat.shape[1]:
             text_feat, uncond_text_feat = text_feat[:, :cfg.model_config.model_kwargs.text_length], uncond_text_feat[:, :cfg.model_config.model_kwargs.text_length]
         
-        logging.info(f"Generating latents for {audio_len_in_s:.2f}s of audio...")
+        logging.info(f"Generating audio ({audio_len_in_s:.2f}s)...")
         
         latents = denoise_process(
             AttributeDict({'siglip2_feat': siglip_feat, 'syncformer_feat': sync_feat}), 
@@ -295,32 +396,32 @@ class HunyuanFoleySampler:
             cfg, guidance_scale, steps
         )
         
-        return ({"samples": latents.cpu(), "audio_len_in_s": audio_len_in_s},)
+        return io.NodeOutput({"samples": latents.cpu(), "audio_len_in_s": audio_len_in_s})
 
 
-class DACHunyuanVAEDecode:
+class DACHunyuanVAEDecode(io.ComfyNode):
     @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": { 
-                "samples": ("LATENT",), 
-                "vae": ("VAE",) 
-            },
-            "optional": {
-                "unload_models_after_use": ("BOOLEAN", {"default": False})
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="DACHunyuanVAEDecode",
+            display_name="Hunyuan-Foley VAE Decode",
+            category="HunyuanVideo-Foley",
+            inputs=[
+                io.Latent.Input("samples"),
+                io.Vae.Input("vae"),
+                io.Boolean.Input("unload_models_after_use", default=False, optional=True)
+            ],
+            outputs=[
+                io.Audio.Output()
+            ]
+        )
 
-    RETURN_TYPES = ("AUDIO",)
-    FUNCTION = "decode"
-    CATEGORY = "HunyuanVideo-Foley"
-
-    def decode(self, samples, vae, unload_models_after_use=False):
+    @classmethod
+    def execute(cls, samples, vae, unload_models_after_use=False) -> io.NodeOutput:
         latents = samples["samples"]
         audio_len_in_s = samples["audio_len_in_s"]
         device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        logging.info("Moving VAE to GPU for decoding...")
         vae_on_device = vae.to(device)
         try:
             with torch.no_grad():
@@ -331,12 +432,11 @@ class DACHunyuanVAEDecode:
         finally:
             vae_on_device.to("cpu")
             empty_cuda_cache()
-            logging.info("VAE decoding complete and moved to CPU.")
 
             if unload_models_after_use:
                 unload_foley_models()
 
-        return (audio_out,)
+        return io.NodeOutput(audio_out)
 
 # --- Node Mappings ---
 NODE_CLASS_MAPPINGS = {
