@@ -128,12 +128,17 @@ class HunyuanFoleyModelLoader(io.ComfyNode):
         model_paths = []
         root_folder_name = os.path.basename(model_dir)
 
-        if os.path.isfile(os.path.join(model_dir, "hunyuanvideo_foley.pth")):
+        checkpoints = ["hunyuanvideo_foley.pth", "hunyuanvideo_foley_xl.pth"]
+        
+        def has_checkpoint(path):
+            return any(os.path.isfile(os.path.join(path, cp)) for cp in checkpoints)
+
+        if has_checkpoint(model_dir):
             model_paths.append(root_folder_name)
         
         for f in os.listdir(model_dir):
             sub_path = os.path.join(model_dir, f)
-            if os.path.isdir(sub_path) and os.path.isfile(os.path.join(sub_path, "hunyuanvideo_foley.pth")):
+            if os.path.isdir(sub_path) and has_checkpoint(sub_path):
                 model_paths.append(f)
         
         if not model_paths:

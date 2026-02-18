@@ -28,7 +28,45 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, SequenceClassifierOutput
 from transformers.modeling_utils import PreTrainedModel
-from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
+try:
+    from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
+except ImportError:
+    try:
+        from transformers.modeling_utils import find_pruneable_heads_and_indices, prune_linear_layer
+    except ImportError:
+        def find_pruneable_heads_and_indices(
+            heads: Set[int], n_heads: int, head_size: int, already_pruned_heads: Set[int]
+        ) -> Tuple[Set[int], torch.LongTensor]:
+            heads = set(heads) - already_pruned_heads
+            if len(heads) == 0:
+                return heads, torch.LongTensor([])
+
+            mask = torch.ones(n_heads, head_size)
+            for head in heads:
+                mask[head] = 0
+            mask = mask.view(-1).contiguous()
+            index = torch.arange(len(mask))[mask == 0]
+            return heads, index
+
+        def prune_linear_layer(layer: nn.Linear, index: torch.LongTensor, dim: int = 0) -> nn.Linear:
+            index = index.to(layer.weight.device)
+            W = layer.weight.index_select(dim, index).clone().detach()
+            if layer.bias is not None:
+                if dim == 1:
+                    b = layer.bias.clone().detach()
+                else:
+                    b = layer.bias.index_select(0, index).clone().detach()
+            new_size = list(layer.weight.size())
+            new_size[dim] = len(index)
+            new_layer = nn.Linear(new_size[1], new_size[0], bias=layer.bias is not None).to(layer.weight.device)
+            new_layer.weight.requires_grad = False
+            new_layer.weight.copy_(W.contiguous())
+            new_layer.weight.requires_grad = True
+            if layer.bias is not None:
+                new_layer.bias.requires_grad = False
+                new_layer.bias.copy_(b.contiguous())
+                new_layer.bias.requires_grad = True
+            return new_layer
 from transformers.models.audio_spectrogram_transformer.modeling_audio_spectrogram_transformer import ASTConfig
 from transformers.utils import (
     add_code_sample_docstrings,
